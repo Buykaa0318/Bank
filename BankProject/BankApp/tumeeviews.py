@@ -25,7 +25,9 @@ def dt_user(request):
             "dataSize": len(data),
         })
 
-    except DatabaseError:
+    except DatabaseError as e:
+        print("DATABASE ERROR:", repr(e))
+
         return JsonResponse({
             "resultCode": 500,
             "resultMessage": "Database error",
