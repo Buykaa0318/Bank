@@ -74,6 +74,7 @@ WSGI_APPLICATION = 'BankProject.wsgi.application'
 
 
 # Database
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
