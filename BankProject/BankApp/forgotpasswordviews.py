@@ -1,32 +1,45 @@
-import email
-from random import randint
-from urllib import request
+import json
+import secrets
 
+from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-import json
+
 from BankProject.settings import connectDB, sendResponse, disconnectDB
-from django.core.mail import send_mail
 
 
 @csrf_exempt
 def dt_forgotpassword(request):
     if request.method != "POST":
-        data = [{"function": "dt_forgotpassword"}]
-        return JsonResponse(sendResponse(request, 1001, data))
+        return JsonResponse(
+            sendResponse(request, 1001, [{"function": "dt_forgotpassword"}])
+        )
 
     try:
         jsons = json.loads(request.body)
-    except json.JSONDecodeError:
-        data = [{"function": "dt_forgotpassword"}]
-        return JsonResponse(sendResponse(request, 1002, data))
-    
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_forgotpassword"}])
+        )
+
+    if not isinstance(jsons, dict):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_forgotpassword"}])
+        )
+
     required_fields = ["action", "email"]
-    if not all(field in jsons and jsons[field] != "" for field in required_fields):
-        data = [{"function": "dt_forgotpassword"}]
-        return JsonResponse(sendResponse(request, 1003, data))
+
+    if not all(
+        field in jsons and jsons[field] is not None and str(jsons[field]).strip()
+        for field in required_fields
+    ):
+        return JsonResponse(
+            sendResponse(request, 1003, [{"function": "dt_forgotpassword"}])
+        )
+
     action = jsons["action"]
-    email = jsons["email"]
+    email = str(jsons["email"]).strip().lower()
+
     conn = None
     cur = None
 
@@ -34,118 +47,256 @@ def dt_forgotpassword(request):
         conn = connectDB()
         cur = conn.cursor()
 
-        sql = """
-            select account_id from users where email = %s
-        """
-        cur.execute(sql, (email,))
-        rows = cur.fetchall()
-        if len(rows) != 1:
-            data = []
-            return JsonResponse(sendResponse(request, 400, data, action))
+        cur.execute(
+            "SELECT account_id FROM users WHERE email = %s",
+            (email,),
+        )
+        row = cur.fetchone()
 
-        account_id = rows[0][0]
+        if not row:
+            return JsonResponse(
+                sendResponse(request, 400, [], action)
+            )
 
-        # Generate a verification code and store it in the database
+        account_id = row[0]
+        verification_code = f"{secrets.randbelow(1000000):06d}"
 
-        n = 6
-        verification_code = ''.join(["{}".format(randint(0, 9)) for num in range(0, n)])
-        sql = """
-            UPDATE users SET reset_code = %s, reset_code_expiry = NOW() + INTERVAL '15 minutes' WHERE account_id = %s
-        """
-        cur.execute(sql, (verification_code, account_id))
+        cur.execute(
+            """
+            UPDATE users
+            SET reset_code = %s,
+                reset_code_expiry = NOW() + INTERVAL '15 minutes'
+            WHERE account_id = %s
+            """,
+            (verification_code, account_id),
+        )
         conn.commit()
 
-        # send_mail(
-        #     'Password Reset Verification Code',
-        #     f'Your password reset verification code is: {verification_code}',
-        #     'from@example.com',
-        #     [email],
-        #     fail_silently=False,
-        #     )
+        # Одоогийн код и-мэйлээр илгээх тохиргоогүй байна.
+        # Иймээс кодыг response-д буцаахгүй.
+        # SMTP тохируулсны дараа verification_code-ийг email-ээр илгээнэ.
 
-        data = [{"email": email}]
-        return JsonResponse(sendResponse(request, 200, data, action))
+        return JsonResponse(
+            sendResponse(
+                request,
+                200,
+                [{"email": email, "message": "Verification code created"}],
+                action,
+            )
+        )
+
     except Exception as e:
-        data = [{"error": str(e)}]
-        return JsonResponse(sendResponse(request, 1006, data, action))
+        print("FORGOT PASSWORD ERROR:", repr(e))
+
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        return JsonResponse(
+            sendResponse(
+                request,
+                1006,
+                [{"error": "Password reset request failed"}],
+                action,
+            )
+        )
 
     finally:
         if cur:
-            cur.close()
+            try:
+                cur.close()
+            except Exception:
+                pass
+
         if conn:
             disconnectDB(conn)
-            
+
 
 @csrf_exempt
-def dt_verifyuser(request):    
-    if request.method != "POST":        
-        return JsonResponse(sendResponse(request, 1001, [{"function": "dt_verifyuser"}]))    
-    try:        
-        jsons = json.loads(request.body)    
-    except json.JSONDecodeError:        
-        return JsonResponse(sendResponse(request, 1002, [{"function": "dt_verifyuser"}]))    
-    required_fields = ["action", "reset_code"]    
-    if not all(field in jsons and jsons[field] != "" for field in required_fields):        
-        return JsonResponse(sendResponse(request, 1003, [{"function": "dt_verifyuser"}]))    
-    action = jsons["action"]      
-    reset_code = jsons["reset_code"]    
-    conn = None    
-    cur = None 
+def dt_verifyuser(request):
+    if request.method != "POST":
+        return JsonResponse(
+            sendResponse(request, 1001, [{"function": "dt_verifyuser"}])
+        )
 
-    try:        
-        conn = connectDB()        
-        cur = conn.cursor()        
-        cur.execute("SELECT account_id, email FROM users WHERE reset_code = %s AND reset_code_expiry > NOW()",            
-        (reset_code,))
-        rows = cur.fetchall()        
-        if len(rows) != 1:            
-            return JsonResponse(sendResponse(request, 400, [], action))        
-        account_id = rows[0][0]   
-        email = rows[0][1]
+    try:
+        jsons = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_verifyuser"}])
+        )
 
-        data = [{            
-            "account_id": account_id,            
-            "email": email,            
-            "verified": True        
-            }]        
-        return JsonResponse(sendResponse(request, 200, data, action))    
-    except Exception as e:        
-        return JsonResponse(sendResponse(request, 1006, [{"error": str(e)}], action))    
-    finally:        
-        if cur:            
-            cur.close()        
-            if conn:            
-                disconnectDB(conn)
+    if not isinstance(jsons, dict):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_verifyuser"}])
+        )
+
+    required_fields = ["action", "reset_code"]
+
+    if not all(
+        field in jsons and jsons[field] is not None and str(jsons[field]).strip()
+        for field in required_fields
+    ):
+        return JsonResponse(
+            sendResponse(request, 1003, [{"function": "dt_verifyuser"}])
+        )
+
+    action = jsons["action"]
+    reset_code = str(jsons["reset_code"]).strip()
+
+    conn = None
+    cur = None
+
+    try:
+        conn = connectDB()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT account_id, email
+            FROM users
+            WHERE reset_code = %s
+              AND reset_code_expiry > NOW()
+            """,
+            (reset_code,),
+        )
+
+        rows = cur.fetchall()
+
+        if len(rows) != 1:
+            return JsonResponse(
+                sendResponse(request, 400, [], action)
+            )
+
+        account_id, email = rows[0]
+
+        data = [{
+            "account_id": account_id,
+            "email": email,
+            "verified": True,
+        }]
+
+        return JsonResponse(
+            sendResponse(request, 200, data, action)
+        )
+
+    except Exception as e:
+        print("VERIFY USER ERROR:", repr(e))
+
+        return JsonResponse(
+            sendResponse(
+                request,
+                1006,
+                [{"error": "Verification failed"}],
+                action,
+            )
+        )
+
+    finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+        if conn:
+            disconnectDB(conn)
+
 
 @csrf_exempt
 def dt_newpassword(request):
     if request.method != "POST":
-        return JsonResponse(sendResponse(request, 1001, [{"function": "dt_newpassword"}]))
+        return JsonResponse(
+            sendResponse(request, 1001, [{"function": "dt_newpassword"}])
+        )
+
     try:
         jsons = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse(sendResponse(request, 1002, [{"function": "dt_newpassword"}]))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_newpassword"}])
+        )
+
+    if not isinstance(jsons, dict):
+        return JsonResponse(
+            sendResponse(request, 1002, [{"function": "dt_newpassword"}])
+        )
+
     required_fields = ["action", "account_id", "new_password"]
-    if not all(field in jsons and jsons[field] != "" for field in required_fields):
-        return JsonResponse(sendResponse(request, 1003, [{"function": "dt_newpassword"}]))
+
+    if not all(
+        field in jsons and jsons[field] is not None and str(jsons[field]).strip()
+        for field in required_fields
+    ):
+        return JsonResponse(
+            sendResponse(request, 1003, [{"function": "dt_newpassword"}])
+        )
+
     action = jsons["action"]
     account_id = jsons["account_id"]
-    new_password = jsons["new_password"]
+    new_password = str(jsons["new_password"])
+
     conn = None
     cur = None
 
     try:
         conn = connectDB()
         cur = conn.cursor()
-        cur.execute("UPDATE users SET passwordhash = %s, reset_code = NULL, reset_code_expiry = NOW() WHERE account_id = %s",
-                    (new_password, account_id))
+
+        cur.execute(
+            """
+            UPDATE users
+            SET passwordhash = %s,
+                reset_code = NULL,
+                reset_code_expiry = NULL
+            WHERE account_id = %s
+            """,
+            (new_password, account_id),
+        )
+
+        if cur.rowcount == 0:
+            conn.rollback()
+            return JsonResponse(
+                sendResponse(request, 400, [], action)
+            )
+
         conn.commit()
-        data = [{"account_id": account_id, "message": "nuuts ug amjilltai sergeegdlee"},]
-        return JsonResponse(sendResponse(request, 200, data, action))
+
+        data = [{
+            "account_id": account_id,
+            "message": "Password reset successfully",
+        }]
+
+        return JsonResponse(
+            sendResponse(request, 200, data, action)
+        )
+
     except Exception as e:
-        return JsonResponse(sendResponse(request, 1006, [{"error": str(e)}], action))
+        print("NEW PASSWORD ERROR:", repr(e))
+
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        return JsonResponse(
+            sendResponse(
+                request,
+                1006,
+                [{"error": "Password reset failed"}],
+                action,
+            )
+        )
+
     finally:
         if cur:
-            cur.close()
+            try:
+                cur.close()
+            except Exception:
+                pass
+
         if conn:
             disconnectDB(conn)
