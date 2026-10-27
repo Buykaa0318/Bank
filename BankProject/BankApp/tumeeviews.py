@@ -12,7 +12,7 @@ def dt_user(request):
             "email",
             "firstname",
             "lastname",
-            "is_active",
+            "status",
             "created_at",
         )
 
