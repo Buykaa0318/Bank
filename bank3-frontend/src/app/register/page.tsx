@@ -3,9 +3,23 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import "./register.css";
 
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://bank-3uq1.onrender.com";
+
+interface RegisterResponse {
+  resultCode: number;
+  resultMessage: string;
+  data: Array<Record<string, unknown>>;
+  dataSize: number;
+}
+
 export default function RegisterPage() {
+  const router = useRouter();
+
   const [form, setForm] = useState({
     firstname: "",
     lastname: "",
@@ -15,15 +29,20 @@ export default function RegisterPage() {
   });
 
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   function updateField(e: React.ChangeEvent<HTMLInputElement>) {
-    setForm({
-      ...form,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(
+    e: React.FormEvent<HTMLFormElement>
+  ) {
     e.preventDefault();
     setMessage("");
 
@@ -42,7 +61,64 @@ export default function RegisterPage() {
       return;
     }
 
-    setMessage("Бүртгэлийн API холболт хүлээгдэж байна.");
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/register/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "register",
+          firstname: form.firstname.trim(),
+          lastname: form.lastname.trim(),
+          email: form.email.trim().toLowerCase(),
+          passwordhash: form.password,
+        }),
+      });
+
+      const data: RegisterResponse = await response.json();
+
+      console.log("REGISTER RESPONSE:", data);
+
+      if (!response.ok) {
+        setMessage("Серверийн алдаа гарлаа. Дахин оролдоно уу.");
+        return;
+      }
+
+      if (data.resultCode === 200) {
+        setMessage("Бүртгэл амжилттай үүслээ. Нэвтрэх хуудас руу шилжиж байна.");
+
+        setForm({
+          firstname: "",
+          lastname: "",
+          email: "",
+          password: "",
+          confirmPassword: "",
+        });
+
+        setTimeout(() => {
+          router.push("/");
+        }, 1200);
+
+        return;
+      }
+
+      if (data.resultCode === 1008) {
+        setMessage("Энэ имэйл хаяг өмнө нь бүртгэгдсэн байна.");
+        return;
+      }
+
+      setMessage(
+        data.resultMessage || "Бүртгэл үүсгэхэд алдаа гарлаа."
+      );
+    } catch (error) {
+      console.error("REGISTER API ERROR:", error);
+      setMessage("Сервертэй холбогдож чадсангүй.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -69,6 +145,8 @@ export default function RegisterPage() {
                 placeholder="Нэр"
                 value={form.firstname}
                 onChange={updateField}
+                autoComplete="given-name"
+                disabled={loading}
                 required
               />
             </div>
@@ -81,6 +159,8 @@ export default function RegisterPage() {
                 placeholder="Овог"
                 value={form.lastname}
                 onChange={updateField}
+                autoComplete="family-name"
+                disabled={loading}
                 required
               />
             </div>
@@ -96,6 +176,7 @@ export default function RegisterPage() {
               value={form.email}
               onChange={updateField}
               autoComplete="email"
+              disabled={loading}
               required
             />
           </div>
@@ -110,6 +191,7 @@ export default function RegisterPage() {
               value={form.password}
               onChange={updateField}
               autoComplete="new-password"
+              disabled={loading}
               required
             />
           </div>
@@ -124,6 +206,7 @@ export default function RegisterPage() {
               value={form.confirmPassword}
               onChange={updateField}
               autoComplete="new-password"
+              disabled={loading}
               required
             />
           </div>
@@ -134,8 +217,12 @@ export default function RegisterPage() {
             </p>
           )}
 
-          <button className="register-button" type="submit">
-            Бүртгүүлэх →
+          <button
+            className="register-button"
+            type="submit"
+            disabled={loading}
+          >
+            {loading ? "Бүртгэж байна..." : "Бүртгүүлэх →"}
           </button>
         </form>
 
