@@ -27,12 +27,14 @@ def dt_qr(request):
         data = [{"function": "dt_qr"}]
         return JsonResponse(sendResponse(request, 1002, data))
     
-    required_fields = ["action", "account_token", "amount", "description"]
-    if not all(field in jsons and jsons[field] != "" for field in required_fields):
+    required_fields = ["action", "amount", "description"]
+    has_account_selector = jsons.get("account_token") or jsons.get("account_id")
+    if not all(field in jsons and jsons[field] != "" for field in required_fields) or not has_account_selector:
         data = [{"function": "dt_qr"}]
         return JsonResponse(sendResponse(request, 1003, data))
     action = jsons["action"]
-    account_token = jsons["account_token"]
+    account_token = jsons.get("account_token")
+    account_id_request = jsons.get("account_id")
     amount = jsons["amount"]
     description = jsons["description"]
     conn = None
@@ -41,10 +43,12 @@ def dt_qr(request):
         conn = connectDB()
         cur = conn.cursor()
 
-        sql = """
-            select  account_number, account_id from accounts where account_token = %s
-        """
-        cur.execute(sql, (account_token,))
+        if account_token:
+            sql = "SELECT account_number, account_id FROM accounts WHERE account_token = %s"
+            cur.execute(sql, (account_token,))
+        else:
+            sql = "SELECT account_number, account_id FROM accounts WHERE account_id = %s"
+            cur.execute(sql, (account_id_request,))
         rows = cur.fetchall()
         if len(rows) != 1:
             data = []
